@@ -18,16 +18,19 @@ const atypeHOST = 0x03
 const atypeIPV6 = 0x04
 
 func main() {
+	// 监听 1080 端口，返回 server
 	server, err := net.Listen("tcp", "127.0.0.1:1080")
 	if err != nil {
 		panic(err)
 	}
 	for {
+		// accept 一个请求，返回一个连接
 		client, err := server.Accept()
 		if err != nil {
 			log.Printf("Accept failed %v", err)
 			continue
 		}
+		// 处理这个连接
 		go process(client)
 	}
 }
@@ -35,11 +38,13 @@ func main() {
 func process(conn net.Conn) {
 	defer conn.Close()
 	reader := bufio.NewReader(conn)
+	// 认证阶段
 	err := auth(reader, conn)
 	if err != nil {
 		log.Printf("client %v auth failed:%v", conn.RemoteAddr(), err)
 		return
 	}
+	// 请求阶段
 	err = connect(reader, conn)
 	if err != nil {
 		log.Printf("client %v auth failed:%v", conn.RemoteAddr(), err)
@@ -59,6 +64,7 @@ func auth(reader *bufio.Reader, conn net.Conn) (err error) {
 	// X’00’ NO AUTHENTICATION REQUIRED
 	// X’02’ USERNAME/PASSWORD
 
+	// 协议版本号
 	ver, err := reader.ReadByte()
 	if err != nil {
 		return fmt.Errorf("read ver failed:%w", err)
@@ -66,11 +72,13 @@ func auth(reader *bufio.Reader, conn net.Conn) (err error) {
 	if ver != socks5Ver {
 		return fmt.Errorf("not supported ver:%v", ver)
 	}
+	// 认证的方法数量
 	methodSize, err := reader.ReadByte()
 	if err != nil {
 		return fmt.Errorf("read methodSize failed:%w", err)
 	}
 	method := make([]byte, methodSize)
+	// 每个 method 的编码
 	_, err = io.ReadFull(reader, method)
 	if err != nil {
 		return fmt.Errorf("read method failed:%w", err)
@@ -115,6 +123,7 @@ func connect(reader *bufio.Reader, conn net.Conn) (err error) {
 	if cmd != cmdBind {
 		return fmt.Errorf("not supported cmd:%v", ver)
 	}
+	// 根据请求内容得到 addr
 	addr := ""
 	switch atyp {
 	case atypIPV4:
@@ -144,7 +153,7 @@ func connect(reader *bufio.Reader, conn net.Conn) (err error) {
 		return fmt.Errorf("read port failed:%w", err)
 	}
 	port := binary.BigEndian.Uint16(buf[:2])
-
+	// 建立 tcp 连接
 	dest, err := net.Dial("tcp", fmt.Sprintf("%v:%v", addr, port))
 	if err != nil {
 		return fmt.Errorf("dial dst failed:%w", err)
@@ -170,7 +179,9 @@ func connect(reader *bufio.Reader, conn net.Conn) (err error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// 两个，从而实现双向转发数据
 	go func() {
+		// 单向转发数据
 		_, _ = io.Copy(dest, reader)
 		cancel()
 	}()
@@ -178,7 +189,7 @@ func connect(reader *bufio.Reader, conn net.Conn) (err error) {
 		_, _ = io.Copy(conn, dest)
 		cancel()
 	}()
-
+	// 等待
 	<-ctx.Done()
 	return nil
 }
